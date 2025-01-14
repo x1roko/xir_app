@@ -1,0 +1,53 @@
+# Flutter related
+build/
+.flutter/
+.packages
+.pub/
+.dart_tool/
+.idea/
+.vscode/
+
+# Android related
+*.iml
+.gradle/
+local.properties
+.DS_Store
+/app/build/
+
+# iOS related
+ios/Flutter/Flutter.framework/
+ios/Flutter/Flutter.podspec
+ios/Flutter/App.framework
+ios/.symlinks
+ios/Pods
+ios/Runner.xcworkspace/
+ios/Flutter/Flutter.podspec
+ios/Flutter/Flutter.framework
+
+# Generated files
+*.log
+*.lock
+*.pyc
+*.pyo
+*.rbc
+*.rdoc
+*.sass-cache
+*.sqlite3
+*.swp
+*.tmproj
+*.tm_properties
+
+# Secrets
+lib/config.dart
+
+# MacOS related
+*.DS_Store
+
+# JetBrains related
+.idea/
+
+# VSCode related
+.vscode/
+
+# Web related
+web/generated_plugin_registrant.dart
