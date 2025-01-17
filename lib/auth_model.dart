@@ -3,6 +3,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'config.dart'; // Импортируем конфигурацию
 
 class AuthModel extends ChangeNotifier {
   String _token = '';
@@ -56,13 +57,13 @@ class AuthModel extends ChangeNotifier {
     if (maps.isNotEmpty) {
       _token = maps.first['token'];
       notifyListeners();
+      await refreshToken();  // Автоматически обновляем токен при загрузке
     }
   }
 
   Future<void> refreshToken() async {
-    // Запрос на обновление токена
     final response = await http.post(
-      Uri.parse('http://x1roko.ru/new-api/refresh-token'),
+      Uri.parse(refreshTokenUrl), // Используем URL из конфигурации
       headers: {'Authorization': 'Bearer $_token'},
     );
 

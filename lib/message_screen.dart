@@ -1,16 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // Добавлен импорт для работы с клавиатурой
 import 'package:provider/provider.dart';
-import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart' as p;
 import 'package:http/http.dart' as http;
-import 'dart:convert';
-import 'dart:io';
 import 'auth_model.dart';
+import 'database_helper.dart';
+import 'network_helper.dart';
 import 'message_widget.dart';
 import 'settings_screen.dart';
 import 'auth_screen.dart';
 import 'account_screen.dart';
-import 'config.dart'; // Импортируем конфигурацию
 
 class MessageScreen extends StatefulWidget {
   @override
@@ -20,57 +18,26 @@ class MessageScreen extends StatefulWidget {
 class _MessageScreenState extends State<MessageScreen> {
   String _message = '';
   TextEditingController _textController = TextEditingController();
-  Database? database;
   List<Map<String, dynamic>> messages = [];
+  ScrollController _scrollController = ScrollController();
+  bool _showScrollToBottom = false;
 
   @override
   void initState() {
     super.initState();
-    _initDatabase();
+    _loadMessages();
+    _scrollController.addListener(_onScroll);
   }
 
   @override
   void dispose() {
     _textController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _initDatabase() async {
-    String dbPath = p.join(await getDatabasesPath(), 'my_database.db');
-    print('Database path: $dbPath');
-
-    if (await databaseExists(dbPath)) {
-      print('Database already exists. Deleting the existing database.');
-      await deleteDatabase(dbPath);
-    }
-
-    database = await openDatabase(
-      dbPath,
-      onCreate: (db, version) {
-        print('Creating new database with messages table.');
-        return db.execute(
-          '''
-          CREATE TABLE messages(
-            id INTEGER PRIMARY KEY, 
-            message TEXT, 
-            token TEXT, 
-            isSentByUser INTEGER
-          )
-          '''
-        );
-      },
-      version: 1,
-    );
-    await _loadMessages();
-  }
-
   Future<void> _loadMessages() async {
-    if (database == null) {
-      print('Database is not initialized.');
-      return;
-    }
-    print('Loading messages from database.');
-    final List<Map<String, dynamic>> loadedMessages = await database!.query('messages');
+    final loadedMessages = await DatabaseHelper.getMessages();
     setState(() {
       messages = List<Map<String, dynamic>>.from(loadedMessages);
       print('Loaded messages: $messages');
@@ -78,92 +45,91 @@ class _MessageScreenState extends State<MessageScreen> {
   }
 
   Future<void> _clearMessages() async {
-    if (database == null) {
-      print('Database is not initialized.');
-      return;
-    }
-    print('Clearing messages from database.');
-    await database!.delete('messages');
-    setState(() {
-      messages.clear();
-      print('Messages cleared.');
-    });
-  }
-
-  Future<void> _saveMessage(String message, bool isSentByUser) async {
-    if (database == null) {
-      print('Database is not initialized.');
-      return;
-    }
-    print('Saving message: $message, sent by user: $isSentByUser');
-    await database!.insert(
-      'messages',
-      {'message': message, 'token': '', 'isSentByUser': isSentByUser ? 1 : 0},
-      conflictAlgorithm: ConflictAlgorithm.replace,
+    bool? confirmDelete = await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Подтверждение'),
+        content: Text('Вы уверены, что хотите удалить все сообщения?'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop(false);
+            },
+            child: Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop(true);
+            },
+            child: Text('Удалить'),
+          ),
+        ],
+      ),
     );
+
+    if (confirmDelete == true) {
+      await DatabaseHelper.clearMessages();
+      setState(() {
+        messages.clear();
+        print('Messages cleared.');
+      });
+    }
   }
 
   Future<void> _sendMessage(String message) async {
-    final authModel = Provider.of<AuthModel>(context, listen: false);
-    if (!authModel.isAuthenticated) {
+    if (message.trim().isEmpty) return;
+
+    setState(() {
+      messages.add({'message': message, 'isSentByUser': 1});
+    });
+
+    final chatHistory = await DatabaseHelper.getContextChat();
+    _scrollToBottom();
+
+    final http.Response? response = await NetworkHelper.sendMessage(context, message, chatHistory);
+
+    if (response == null || response.statusCode != 200) {
+      print('Ошибка при отправке сообщения: ${response?.statusCode}');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Пожалуйста, авторизуйтесь перед отправкой сообщения.')),
+        SnackBar(content: Text('Ошибка при отправке сообщения: ${response?.statusCode}')),
       );
       return;
     }
 
-    if (database == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('База данных не инициализирована.')),
-      );
-      return;
-    }
+    final responseMessage = response.body;
+    await DatabaseHelper.saveMessage(message, true);
+    await DatabaseHelper.saveMessage(responseMessage, false);
+    setState(() {
+      messages.add({'message': responseMessage, 'isSentByUser': 0});
+    });
+    _scrollToBottom();
+  }
 
-    print('Sending message with token: ${authModel.token}');
-
-    final response = await http.post(
-      Uri.parse(groqUrl), // Используем URL из конфигурации
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ${authModel.token}',
-      },
-      body: jsonEncode({'text': message}),
-    );
-
-    print('Response status: ${response.statusCode}');
-    print('Response body: ${response.body}');
-
-    if (response.statusCode == 401) {
-      // Токен недействителен, обновляем токен и пробуем снова
-      await authModel.refreshToken();
-      return _sendMessage(message);  // Повторный вызов функции после обновления токена
-    }
-
-    if (response.statusCode == 200) {
-      final responseMessage = response.body;
-      await _saveMessage(message, true);
-      await _saveMessage(responseMessage, false);
-      setState(() {
-        messages = List<Map<String, dynamic>>.from(messages);  // Создаем новый список сообщений
-        messages.add({'message': message, 'isSentByUser': 1});
-        messages.add({'message': responseMessage, 'isSentByUser': 0});
-        _message = '';
-        _textController.clear();
-        print('Message sent and saved: $message');
-      });
-    } else {
-      print('Ошибка при отправке сообщения: ${response.statusCode}');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ошибка при отправке сообщения: ${response.statusCode}')),
+  void _scrollToBottom() {
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: Duration(milliseconds: 300),
+        curve: Curves.easeOut,
       );
     }
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+
+    final atBottom = _scrollController.offset >=
+        (_scrollController.position.maxScrollExtent - 50);
+    setState(() {
+      _showScrollToBottom = !atBottom;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Сообщение'),
+        title: Text('Чат'),
         actions: [
           IconButton(
             icon: Icon(Icons.settings),
@@ -171,21 +137,15 @@ class _MessageScreenState extends State<MessageScreen> {
               Navigator.of(context).push(MaterialPageRoute(builder: (_) => SettingsScreen()));
             },
           ),
-          IconButton(
-            icon: Icon(Icons.delete),
-            onPressed: () {
-              _clearMessages();
-            },
-          ),
           Consumer<AuthModel>(
-            builder: (ctx, authModel, child) {
+            builder: (context, authModel, child) {
               return IconButton(
                 icon: Icon(authModel.isAuthenticated ? Icons.account_circle : Icons.login),
                 onPressed: () {
                   if (authModel.isAuthenticated) {
-                    Navigator.of(ctx).push(MaterialPageRoute(builder: (_) => AccountScreen()));
+                    Navigator.of(context).push(MaterialPageRoute(builder: (_) => AccountScreen()));
                   } else {
-                    Navigator.of(ctx).push(MaterialPageRoute(builder: (_) => AuthScreen()));
+                    Navigator.of(context).push(MaterialPageRoute(builder: (_) => AuthScreen()));
                   }
                 },
               );
@@ -193,54 +153,78 @@ class _MessageScreenState extends State<MessageScreen> {
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
-          Expanded(
-            child: ListView.builder(
-              itemCount: messages.length,
-              itemBuilder: (context, index) {
-                final message = messages[index];
-                return MessageWidget(
-                  message: message['message'],
-                  isSentByUser: message['isSentByUser'] == 1,
-                );
-              },
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _textController,
-                    onChanged: (value) {
-                      setState(() {
-                        _message = value;
-                        _textController.value = TextEditingValue(
-                          text: value,
-                          selection: TextSelection.fromPosition(
-                            TextPosition(offset: value.length),
-                          ),
-                        );
-                      });
-                    },
-                    decoration: InputDecoration(
-                      labelText: 'Введите текст',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: () {
-                    _sendMessage(_message);
+          Column(
+            children: [
+              Expanded(
+                child: ListView.builder(
+                  controller: _scrollController,
+                  itemCount: messages.length,
+                  itemBuilder: (context, index) {
+                    final message = messages[index];
+                    return MessageWidget(
+                      message: message['message'],
+                      isSentByUser: message['isSentByUser'] == 1,
+                    );
                   },
-                  child: Text('Отправить'),
                 ),
-              ],
-            ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: Icon(Icons.delete),
+                      onPressed: _clearMessages,
+                    ),
+                    Expanded(
+                      child: TextField(
+                        controller: _textController,
+                        minLines: 1,
+                        maxLines: 5, // Ограничиваем количество строк до 5
+                        keyboardType: TextInputType.multiline, // Многократный ввод
+                        textInputAction: TextInputAction.done, // Переход на новую строку
+                        onChanged: (value) {
+                          setState(() {
+                            _message = value;
+                          });
+                        },
+                        onSubmitted: (value) {
+                          _sendMessage(_message);
+                        },
+                        decoration: InputDecoration(
+                          labelText: 'Введите текст',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: 8),
+                    IconButton(
+                      icon: Icon(Icons.send), // Кнопка отправки
+                      onPressed: () {
+                        _sendMessage(_message);
+                        _textController.clear();
+                        setState(() {
+                          _message = '';
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
+          if (_showScrollToBottom)
+            Positioned(
+              bottom: 70,
+              right: 20,
+              child: FloatingActionButton(
+                mini: true,
+                onPressed: _scrollToBottom,
+                child: Icon(Icons.arrow_downward),
+              ),
+            ),
         ],
       ),
     );
