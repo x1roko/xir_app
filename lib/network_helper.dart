@@ -19,7 +19,7 @@ class NetworkHelper {
 
     print('Sending message with token: ${authModel.token}');
 
-    final messageToSend = "Контекст:${chatHistory.toString()}\nЗапрос: ${message}";
+    final messageToSend = "Контекст:${chatHistory.toString()}\nЗапрос: $message";
 
     final response = await http.post(
       Uri.parse(groqUrl), // Используем URL из конфигурации

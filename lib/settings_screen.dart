@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import 'theme_model.dart';
 
 class SettingsScreen extends StatelessWidget {
+  const SettingsScreen({super.key});
+
   @override
   Widget build(BuildContext context) {
     final themeModel = Provider.of<ThemeModel>(context);

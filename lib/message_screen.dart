@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // Добавлен импорт для работы с клавиатурой
+import 'package:flutter/services.dart'; // Import for keyboard handling
+import 'package:flutter_sound/flutter_sound.dart';
 import 'package:provider/provider.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:http/http.dart' as http;
 import 'auth_model.dart';
 import 'database_helper.dart';
@@ -11,29 +13,51 @@ import 'auth_screen.dart';
 import 'account_screen.dart';
 
 class MessageScreen extends StatefulWidget {
+  const MessageScreen({super.key});
+
   @override
   _MessageScreenState createState() => _MessageScreenState();
 }
 
 class _MessageScreenState extends State<MessageScreen> {
   String _message = '';
-  TextEditingController _textController = TextEditingController();
+  final TextEditingController _textController = TextEditingController();
   List<Map<String, dynamic>> messages = [];
-  ScrollController _scrollController = ScrollController();
+  final ScrollController _scrollController = ScrollController();
   bool _showScrollToBottom = false;
+  bool _isRecording = false;
+  late stt.SpeechToText _speech;
+  late FlutterSoundPlayer _audioPlayer;
+  String? _audioFilePath;
 
   @override
   void initState() {
     super.initState();
+    _speech = stt.SpeechToText();
+    _audioPlayer = FlutterSoundPlayer();
     _loadMessages();
     _scrollController.addListener(_onScroll);
+    _initializeSpeech();
+    _initializeAudioPlayer();
   }
 
   @override
   void dispose() {
     _textController.dispose();
     _scrollController.dispose();
+    _audioPlayer.closePlayer();  // Optional cleanup (but not necessary in latest version)
     super.dispose();
+  }
+
+  Future<void> _initializeSpeech() async {
+    bool available = await _speech.initialize();
+    if (!available) {
+      print("Speech recognition not available");
+    }
+  }
+
+  Future<void> _initializeAudioPlayer() async {
+    await _audioPlayer.openPlayer();  // Ensure this is called to open the session (even though it's automatic in the background).
   }
 
   Future<void> _loadMessages() async {
@@ -76,6 +100,26 @@ class _MessageScreenState extends State<MessageScreen> {
     }
   }
 
+  Future<void> _startListening() async {
+    if (_isRecording) return;
+    setState(() => _isRecording = true);
+    await _speech.listen(onResult: (result) {
+      setState(() {
+        _message = result.recognizedWords;
+      });
+    });
+  }
+
+  Future<void> _stopListening() async {
+    if (!_isRecording) return;
+    await _speech.stop();
+    setState(() => _isRecording = false);
+    if (_message.isNotEmpty) {
+      _sendMessage(_message);
+      _textController.clear();
+    }
+  }
+
   Future<void> _sendMessage(String message) async {
     if (message.trim().isEmpty) return;
 
@@ -97,8 +141,8 @@ class _MessageScreenState extends State<MessageScreen> {
     }
 
     final responseMessage = response.body;
-    await DatabaseHelper.saveMessage(message, true);
-    await DatabaseHelper.saveMessage(responseMessage, false);
+    await DatabaseHelper.saveMessage(message: message, isSentByUser: true);
+    await DatabaseHelper.saveMessage(message: responseMessage, isSentByUser: false);
     setState(() {
       messages.add({'message': responseMessage, 'isSentByUser': 0});
     });
@@ -123,6 +167,17 @@ class _MessageScreenState extends State<MessageScreen> {
     setState(() {
       _showScrollToBottom = !atBottom;
     });
+  }
+
+  Future<void> _playAudio(String filePath) async {
+    if (filePath.isNotEmpty) {
+      await _audioPlayer.startPlayer(
+        fromURI: filePath,
+        whenFinished: () {
+          print("Audio playback finished");
+        },
+      );
+    }
   }
 
   @override
@@ -166,6 +221,9 @@ class _MessageScreenState extends State<MessageScreen> {
                     return MessageWidget(
                       message: message['message'],
                       isSentByUser: message['isSentByUser'] == 1,
+                      onPlayAudio: message['audioPath'] != null
+                          ? () => _playAudio(message['audioPath'])
+                          : null,
                     );
                   },
                 ),
@@ -179,37 +237,55 @@ class _MessageScreenState extends State<MessageScreen> {
                       onPressed: _clearMessages,
                     ),
                     Expanded(
-                      child: TextField(
-                        controller: _textController,
-                        minLines: 1,
-                        maxLines: 5, // Ограничиваем количество строк до 5
-                        keyboardType: TextInputType.multiline, // Многократный ввод
-                        textInputAction: TextInputAction.done, // Переход на новую строку
-                        onChanged: (value) {
-                          setState(() {
-                            _message = value;
-                          });
+                      child: RawKeyboardListener(
+                        focusNode: FocusNode(),
+                        onKey: (event) {
+                          if (event.logicalKey == LogicalKeyboardKey.enter && event.isShiftPressed) {
+                            _textController.text += '\n';
+                            _textController.selection = TextSelection.collapsed(offset: _textController.text.length);
+                          }
+                          if (event.logicalKey == LogicalKeyboardKey.enter && !event.isShiftPressed) {
+                            _sendMessage(_message);
+                            _textController.clear();
+                            setState(() {
+                              _message = '';
+                            });
+                          }
                         },
-                        onSubmitted: (value) {
-                          _sendMessage(_message);
-                        },
-                        decoration: InputDecoration(
-                          labelText: 'Введите текст',
-                          border: OutlineInputBorder(),
+                        child: TextField(
+                          controller: _textController,
+                          minLines: 1,
+                          maxLines: 5,
+                          keyboardType: TextInputType.multiline,
+                          textInputAction: TextInputAction.done,
+                          onChanged: (value) {
+                            setState(() {
+                              _message = value;
+                            });
+                          },
+                          decoration: InputDecoration(
+                            labelText: 'Введите текст',
+                            border: OutlineInputBorder(),
+                          ),
                         ),
                       ),
                     ),
                     SizedBox(width: 8),
-                    IconButton(
-                      icon: Icon(Icons.send), // Кнопка отправки
-                      onPressed: () {
-                        _sendMessage(_message);
-                        _textController.clear();
-                        setState(() {
-                          _message = '';
-                        });
-                      },
-                    ),
+                    _message.trim().isEmpty
+                        ? IconButton(
+                            icon: Icon(Icons.mic),
+                            onPressed: _startListening,
+                          )
+                        : IconButton(
+                            icon: Icon(Icons.send),
+                            onPressed: () {
+                              _sendMessage(_message);
+                              _textController.clear();
+                              setState(() {
+                                _message = '';
+                              });
+                            },
+                          ),
                   ],
                 ),
               ),

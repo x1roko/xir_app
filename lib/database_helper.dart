@@ -14,30 +14,30 @@ class DatabaseHelper {
     String dbPath = p.join(await getDatabasesPath(), 'my_database.db');
     print('Database path: $dbPath');
 
-    if (await databaseExists(dbPath)) {
-      print('Database already exists.');
-    } else {
-      print('Creating new database.');
-      return await openDatabase(
-        dbPath,
-        onCreate: (db, version) {
-          print('Creating new database with messages table.');
-          return db.execute(
-            '''
-            CREATE TABLE messages(
-              id INTEGER PRIMARY KEY, 
-              message TEXT, 
-              token TEXT, 
-              isSentByUser INTEGER
-            )
-            '''
-          );
-        },
-        version: 1,
-      );
-    }
-
-    return await openDatabase(dbPath);
+    return await openDatabase(
+      dbPath,
+      version: 2,
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          print('Adding audioPath column to messages table.');
+          await db.execute('ALTER TABLE messages ADD COLUMN audioPath TEXT');
+        }
+      },
+      onCreate: (db, version) async {
+        print('Creating new database with messages table.');
+        await db.execute(
+          '''
+          CREATE TABLE messages(
+            id INTEGER PRIMARY KEY, 
+            message TEXT, 
+            token TEXT, 
+            isSentByUser INTEGER,
+            audioPath TEXT
+          )
+          '''
+        );
+      },
+    );
   }
 
   static Future<List<Map<String, dynamic>>> getMessages() async {
@@ -60,16 +60,25 @@ class DatabaseHelper {
     await db.delete('messages');
   }
 
-  static Future<void> saveMessage(String message, bool isSentByUser) async {
+  static Future<void> saveMessage({
+    required String? message,
+    required bool isSentByUser,
+    String? audioPath,
+  }) async {
     final db = await database;
     if (db == null) {
       print('Database is not initialized.');
       return;
     }
-    print('Saving message: $message, sent by user: $isSentByUser');
+    print('Saving message: $message, audioPath: $audioPath, sent by user: $isSentByUser');
     await db.insert(
       'messages',
-      {'message': message, 'token': '', 'isSentByUser': isSentByUser ? 1 : 0},
+      {
+        'message': message,
+        'token': '',
+        'isSentByUser': isSentByUser ? 1 : 0,
+        'audioPath': audioPath,
+      },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
@@ -82,18 +91,16 @@ class DatabaseHelper {
     }
     print('Fetching chat history from database.');
 
-    // Получаем все сообщения из таблицы
     final List<Map<String, dynamic>> messages = await db.query(
       'messages',
       orderBy: 'id DESC',
-      limit: 10
-      );
+      limit: 10,
+    );
 
-    // Извлекаем только текст сообщений
-    return messages.map((msg) => msg['message'] as String).toList();
+    return messages.map((msg) => msg['message'] as String? ?? '').toList();
   }
 
-  static Future<List<String>> getChatHistory() async {
+  static Future<List<Map<String, dynamic>>> getChatHistory() async {
     final db = await database;
     if (db == null) {
       print('Database is not initialized.');
@@ -101,10 +108,6 @@ class DatabaseHelper {
     }
     print('Fetching chat history from database.');
 
-    // Получаем все сообщения из таблицы
-    final List<Map<String, dynamic>> messages = await db.query('messages');
-
-    // Извлекаем только текст сообщений
-    return messages.map((msg) => msg['message'] as String).toList();
+    return await db.query('messages');
   }
 }

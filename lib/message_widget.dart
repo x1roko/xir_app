@@ -7,27 +7,31 @@ import 'package:flutter_highlight/themes/github.dart'; // Тема подсве�
 class MessageWidget extends StatelessWidget {
   final String message;
   final bool isSentByUser;
+  final VoidCallback? onPlayAudio;
 
-  MessageWidget({required this.message, required this.isSentByUser});
+  const MessageWidget({
+    Key? key,
+    required this.message,
+    required this.isSentByUser,
+    this.onPlayAudio,
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     final isDarkTheme = Theme.of(context).brightness == Brightness.dark;
 
-    // Функция для парсинга текста и извлечения блоков кода
-    List<Map<String, String?>> _parseMessage(String text) {
+    List<Map<String, String?>> parseMessage(String text) {
       final regex = RegExp(r'```(\w+)?\n([\s\S]*?)```');
       final matches = regex.allMatches(text);
       List<Map<String, String?>> parsedBlocks = [];
 
       for (var match in matches) {
         parsedBlocks.add({
-          'language': match.group(1), // Язык программирования
-          'code': match.group(2), // Блок кода
+          'language': match.group(1),
+          'code': match.group(2),
         });
       }
 
-      // Остальной текст (не код) в сообщении
       String remainingText = text.replaceAll(regex, '').trim();
       parsedBlocks.add({
         'text': remainingText,
@@ -36,7 +40,7 @@ class MessageWidget extends StatelessWidget {
       return parsedBlocks;
     }
 
-    final parsedBlocks = _parseMessage(message);
+    final parsedBlocks = parseMessage(message);
 
     return Align(
       alignment: isSentByUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -46,7 +50,7 @@ class MessageWidget extends StatelessWidget {
         decoration: BoxDecoration(
           color: isSentByUser
               ? const Color.fromARGB(255, 65, 65, 65)
-              : const Color.fromARGB(255, 41, 41, 41), // Сообщение серое
+              : const Color.fromARGB(255, 41, 41, 41),
           borderRadius: BorderRadius.circular(15),
           boxShadow: [
             BoxShadow(
@@ -59,25 +63,23 @@ class MessageWidget extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Отображаем обычный текст
             for (var block in parsedBlocks)
               if (block['text'] != null && block['text']!.isNotEmpty)
                 SelectableText(
                   block['text']!,
                   style: TextStyle(
-                    color: Colors.white, // Текст сообщения
+                    color: Colors.white,
                     fontSize: 16,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
-            // Отображаем код
             for (var block in parsedBlocks)
               if (block['code'] != null && block['code']!.isNotEmpty)
                 Container(
                   margin: EdgeInsets.only(top: 12),
                   padding: EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.black, // Чёрный фон для кода
+                    color: Colors.black,
                     borderRadius: BorderRadius.circular(12),
                     boxShadow: [
                       BoxShadow(
@@ -104,7 +106,6 @@ class MessageWidget extends StatelessWidget {
                             IconButton(
                               icon: Icon(Icons.copy, size: 20),
                               onPressed: () {
-                                // Проверяем, если блок кода пустой или null, передаем пустую строку
                                 String code = block['code'] ?? '';
                                 Clipboard.setData(ClipboardData(text: code));
                                 ScaffoldMessenger.of(context).showSnackBar(
@@ -116,7 +117,7 @@ class MessageWidget extends StatelessWidget {
                         ),
                       Container(
                         decoration: BoxDecoration(
-                          color: Colors.black, // Чёрный фон для кода
+                          color: Colors.black,
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: SelectableText.rich(
@@ -131,20 +132,24 @@ class MessageWidget extends StatelessWidget {
                           style: TextStyle(
                             fontFamily: 'monospace',
                             fontSize: 14,
-                            color: Colors.white70, // Текст в коде — светло-белый
+                            color: Colors.white70,
                           ),
                         ),
                       ),
                     ],
                   ),
                 ),
+            if (onPlayAudio != null)
+              IconButton(
+                icon: Icon(Icons.play_arrow),
+                onPressed: onPlayAudio,
+              ),
           ],
         ),
       ),
     );
   }
 
-  // Конвертируем ноды подсветки в TextSpan
   TextSpan _convertNodeToTextSpan(Node node) {
     if (node.value != null) {
       return TextSpan(text: node.value);
@@ -159,7 +164,6 @@ class MessageWidget extends StatelessWidget {
     return TextSpan();
   }
 
-  // Получаем цвет для типа подсветки
   Color? _getColorForType(String? type) {
     switch (type) {
       case 'keyword':

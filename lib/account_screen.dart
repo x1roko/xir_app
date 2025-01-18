@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import 'auth_model.dart';
 
 class AccountScreen extends StatelessWidget {
+  const AccountScreen({super.key});
+
   @override
   Widget build(BuildContext context) {
     final authModel = Provider.of<AuthModel>(context);

@@ -1,4 +1,10 @@
 # This is a generated file; do not edit or check into version control.
+audio_session=/home/xiroko/.pub-cache/hosted/pub.dev/audio_session-0.1.23/
+flutter_sound=/home/xiroko/.pub-cache/hosted/pub.dev/flutter_sound-9.19.1/
+flutter_sound_web=/home/xiroko/.pub-cache/hosted/pub.dev/flutter_sound_web-9.19.1/
+path_provider=/home/xiroko/.pub-cache/hosted/pub.dev/path_provider-2.1.5/
+path_provider_android=/home/xiroko/.pub-cache/hosted/pub.dev/path_provider_android-2.2.15/
+path_provider_foundation=/home/xiroko/.pub-cache/hosted/pub.dev/path_provider_foundation-2.4.1/
 path_provider_linux=/home/xiroko/.pub-cache/hosted/pub.dev/path_provider_linux-2.2.1/
 path_provider_windows=/home/xiroko/.pub-cache/hosted/pub.dev/path_provider_windows-2.3.0/
 shared_preferences=/home/xiroko/.pub-cache/hosted/pub.dev/shared_preferences-2.3.5/
@@ -7,6 +13,7 @@ shared_preferences_foundation=/home/xiroko/.pub-cache/hosted/pub.dev/shared_pref
 shared_preferences_linux=/home/xiroko/.pub-cache/hosted/pub.dev/shared_preferences_linux-2.4.1/
 shared_preferences_web=/home/xiroko/.pub-cache/hosted/pub.dev/shared_preferences_web-2.4.2/
 shared_preferences_windows=/home/xiroko/.pub-cache/hosted/pub.dev/shared_preferences_windows-2.4.1/
+speech_to_text=/home/xiroko/.pub-cache/hosted/pub.dev/speech_to_text-7.0.0/
 sqflite=/home/xiroko/.pub-cache/hosted/pub.dev/sqflite-2.4.1/
 sqflite_android=/home/xiroko/.pub-cache/hosted/pub.dev/sqflite_android-2.4.0/
 sqflite_darwin=/home/xiroko/.pub-cache/hosted/pub.dev/sqflite_darwin-2.4.1+1/

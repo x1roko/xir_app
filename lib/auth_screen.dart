@@ -9,6 +9,8 @@ class AuthScreen extends StatelessWidget {
   final TextEditingController usernameController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
 
+  AuthScreen({super.key});
+
   Future<void> _register(BuildContext context) async {
     final response = await http.post(
       Uri.parse(registerUrl), // Используем URL из конфигурации
