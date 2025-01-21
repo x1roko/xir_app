@@ -10,14 +10,15 @@ environment:
 dependencies: 
   flutter: 
     sdk: flutter 
-  provider: ^6.1.1
+  provider: ^6.1.2
   shared_preferences: ^2.0.6 
   http: ^0.13.3 
   sqflite: ^2.0.2+1 
   path: 
-  flutter_sound: ^9.19.1
+  just_audio: ^0.9.29
+  record: ^5.2.0
   speech_to_text: ^7.0.0  # Обновлено до версии 7.0.0
-
+  flutter_sound: ^9.3.0
   cupertino_icons: ^1.0.8
   flutter_highlight: ^0.7.0
 
