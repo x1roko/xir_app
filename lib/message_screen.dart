@@ -1,20 +1,20 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:io';
-import 'package:provider/provider.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:record/record.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:http/http.dart' as http;
-import 'database_helper.dart';
-import 'network_helper.dart';
+import 'package:provider/provider.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:flutter/scheduler.dart';
 import 'auth_model.dart';
+import 'database_helper.dart';
 import 'message_widget.dart';
+import 'network_helper.dart';
 import 'settings_screen.dart';
 import 'auth_screen.dart';
 import 'account_screen.dart';
+import 'dart:convert';
 
 class MessageScreen extends StatefulWidget {
   const MessageScreen({super.key});
@@ -24,25 +24,41 @@ class MessageScreen extends StatefulWidget {
 }
 
 class _MessageScreenState extends State<MessageScreen> {
+  final _messagesController = StreamController<List<Map<String, dynamic>>>.broadcast();
+  final List<Map<String, dynamic>> _messages = [];
   static const platform = MethodChannel('com.example.xir_app/process_text');
   String _message = '';
   final TextEditingController _textController = TextEditingController();
-  List<Map<String, dynamic>> messages = [];
   final ScrollController _scrollController = ScrollController();
   bool _showScrollToBottom = false;
   bool _isRecording = false;
   Duration _recordDuration = Duration.zero;
   Timer? _timer;
-  final AudioRecorder _record = AudioRecorder();
+  final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
   final AudioPlayer _player = AudioPlayer();
-  String? _audioFilePath;
+  WebSocketChannel? _channel;
+  String _currentMessage = '';
 
   @override
   void initState() {
     super.initState();
-    _loadMessages();
     _scrollController.addListener(_onScroll);
-    _getTextFromPlatform();
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _loadTokenAndConnect();
+    });
+  }
+
+  Future<void> _loadTokenAndConnect() async {
+    final authModel = Provider.of<AuthModel>(context, listen: false);
+    await authModel.loadToken();
+    print('Token loaded: ${authModel.token}');
+
+    if (authModel.isAuthenticated) {
+      await _loadMessagesFromServer();
+      await _connectWebSocket();
+    } else {
+      _showSnackBar('Пожалуйста, авторизуйтесь.');
+    }
   }
 
   @override
@@ -51,68 +67,61 @@ class _MessageScreenState extends State<MessageScreen> {
     _scrollController.dispose();
     _player.dispose();
     _timer?.cancel();
+    _recorder.closeRecorder();
+    _channel?.sink.close();
+    _messagesController.close();
     super.dispose();
   }
 
-  Future<void> _getTextFromPlatform() async {
-    String receivedText;
+  Future<void> _loadMessagesFromServer() async {
     try {
-      final String result = await platform.invokeMethod('processText');
-      receivedText = result ?? 'No text received';
-    } on PlatformException catch (e) {
-      receivedText = "";
+      final loadedMessages = await NetworkHelper.loadMessages(context);
+      for (var msg in loadedMessages) {
+        _messages.add({
+          'message': msg['text'],
+          'isSentByUser': msg['is_user'] ? 1 : 0,
+        });
+      }
+      _messagesController.add(_messages); // Добавляем данные в StreamController
+    } catch (e) {
+      print('Error loading messages: $e');
+      _showSnackBar('Ошибка загрузки сообщений: $e');
     }
-
-    setState(() {
-      _message = receivedText;
-      _textController.text = receivedText;
-    });
   }
 
-  Future<void> _loadMessages() async {
-    final loadedMessages = await DatabaseHelper.getMessages();
-    setState(() {
-      messages = List<Map<String, dynamic>>.from(loadedMessages);
-      print('Loaded messages: $messages');
-    });
+  Future<void> _initializeRecorder() async {
+    try {
+      await _recorder.openRecorder();
+    } catch (e) {
+      print('Error initializing recorder: $e');
+      _showSnackBar('Ошибка инициализации записи');
+    }
   }
 
   Future<void> _startRecording() async {
     if (_isRecording) return;
 
-    final directory = await getApplicationDocumentsDirectory();
-    final _audioFilePath = '${directory.path}/audio_message.m4a';
-
     try {
-      if (await _record.hasPermission()) {
-        await _record.start(
-          const RecordConfig(
-            encoder: AudioEncoder.aacLc,
-            bitRate: 128000,
-            sampleRate: 44100,
-          ),
-          path: _audioFilePath,
-        );
+      await _recorder.startRecorder(
+        toFile: 'temp_audio.aac',
+        codec: Codec.aacMP4,
+      );
 
+      setState(() {
+        _isRecording = true;
+        _recordDuration = Duration.zero;
+      });
+
+      _timer = Timer.periodic(Duration(seconds: 1), (timer) {
         setState(() {
-          _isRecording = true;
-          _recordDuration = Duration.zero;
+          _recordDuration = Duration(seconds: _recordDuration.inSeconds + 1);
         });
-
-        _timer = Timer.periodic(Duration(seconds: 1), (timer) {
-          setState(() {
-            _recordDuration = Duration(seconds: _recordDuration.inSeconds + 1);
-          });
-        });
-      }
+      });
     } catch (e) {
       print('Ошибка при начале записи: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось начать запись')),
-      );
+      _showSnackBar('Не удалось начать запись');
     }
   }
-
 
   void _stopRecording({bool cancel = false}) async {
     if (!_isRecording) return;
@@ -120,32 +129,19 @@ class _MessageScreenState extends State<MessageScreen> {
     _timer?.cancel();
 
     try {
-      final path = await _record.stop();
+      final path = await _recorder.stopRecorder();
       setState(() {
         _isRecording = false;
       });
 
       if (!cancel && path != null) {
         String recognizedText = await _recognizeSpeech(path);
-        _sendMessage(recognizedText, path);
+        _sendMessage(recognizedText, null);
+        await File(path).delete(); // Удаляем временный файл
       }
     } catch (e) {
       print('Ошибка при остановке записи: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось остановить запись')),
-      );
-    }
-  }
-
-  void _playAudio(String filePath) async {
-    try {
-      await _player.setFilePath(filePath);
-      _player.play();
-    } catch (e) {
-      print('Ошибка воспроизведения аудио: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось воспроизвести аудио')),
-      );
+      _showSnackBar('Не удалось остановить запись');
     }
   }
 
@@ -156,34 +152,16 @@ class _MessageScreenState extends State<MessageScreen> {
     return "распознанный текст"; // Замените на реальный распознанный текст
   }
 
-
   Future<void> _sendMessage(String message, String? filePath) async {
     if (message.trim().isEmpty) return;
 
-    setState(() {
-      messages.add({'message': message, 'isSentByUser': 1});
-    });
+    final newMessage = {'message': message, 'isSentByUser': 1};
+    _messages.add(newMessage);
+    _messagesController.add(_messages);
 
-    final chatHistory = await DatabaseHelper.getContextChat();
     _scrollToBottom();
 
-    final http.Response? response = await NetworkHelper.sendMessage(context, message, chatHistory);
-
-    if (response == null || response.statusCode != 200) {
-      print('Ошибка при отправке сообщения: ${response?.statusCode}');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ошибка при отправке сообщения: ${response?.statusCode}')),
-      );
-      return;
-    }
-
-    final responseMessage = response.body;
-    await DatabaseHelper.saveMessage(message: message, isSentByUser: true);
-    await DatabaseHelper.saveMessage(message: responseMessage, isSentByUser: false);
-    setState(() {
-      messages.add({'message': responseMessage, 'isSentByUser': 0});
-    });
-    _scrollToBottom();
+    _channel?.sink.add(jsonEncode({'text': message}));
   }
 
   void _scrollToBottom() {
@@ -204,6 +182,54 @@ class _MessageScreenState extends State<MessageScreen> {
     setState(() {
       _showScrollToBottom = !atBottom;
     });
+  }
+
+  void _onMessageTap(String message, String? filePath) async {
+    if (filePath != null) {
+      String recognizedText = await _recognizeSpeech(filePath);
+      setState(() {
+        _message = recognizedText;
+        _textController.text = recognizedText;
+      });
+    }
+  }
+
+  Future<void> _connectWebSocket() async {
+    try {
+      _channel?.sink.close(); // Закрываем предыдущее подключение, если оно существует
+      _channel = await NetworkHelper.connectWebSocket(context);
+
+      if (_channel != null) {
+        print('WebSocket connected successfully');
+        _channel!.stream.listen((message) {
+          print('WebSocket message received: $message');
+          setState(() {
+            _currentMessage += message;
+            if (message.endsWith('?')) {
+              final newMessage = {'message': _currentMessage, 'isSentByUser': 0};
+              _messages.add(newMessage);
+              _messagesController.add(_messages);
+              _scrollToBottom();
+              _currentMessage = '';
+            }
+          });
+        }, onError: (error) {
+          print('WebSocket error: $error');
+          _showSnackBar('Ошибка WebSocket: $error');
+        }, onDone: () {
+          print('WebSocket connection closed');
+        });
+      }
+    } catch (e) {
+      print('Error connecting to WebSocket: $e');
+      _showSnackBar('Ошибка подключения к WebSocket: $e');
+    }
+  }
+
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   @override
@@ -239,15 +265,29 @@ class _MessageScreenState extends State<MessageScreen> {
           Column(
             children: [
               Expanded(
-                child: ListView.builder(
-                  controller: _scrollController,
-                  itemCount: messages.length,
-                  itemBuilder: (context, index) {
-                    final message = messages[index];
-                    return MessageWidget(
-                      message: message['message'],
-                      isSentByUser: message['isSentByUser'] == 1,
-                    );
+                child: StreamBuilder<List<Map<String, dynamic>>>(
+                  stream: _messagesController.stream,
+                  builder: (context, snapshot) {
+                    if (snapshot.hasData) {
+                      return ListView.builder(
+                        controller: _scrollController,
+                        itemCount: snapshot.data!.length,
+                        itemBuilder: (context, index) {
+                          final message = snapshot.data![index];
+                          final messageText = message['message'] ?? '';
+                          final isSentByUser = message['isSentByUser'] == 1;
+                          return GestureDetector(
+                            onTap: () => _onMessageTap(messageText, message['filePath']),
+                            child: MessageWidget(
+                              message: messageText,
+                              isSentByUser: isSentByUser,
+                            ),
+                          );
+                        },
+                      );
+                    } else {
+                      return Center(child: CircularProgressIndicator());
+                    }
                   },
                 ),
               ),
@@ -280,11 +320,9 @@ class _MessageScreenState extends State<MessageScreen> {
                           ),
                         );
                         if (confirmDelete == true) {
-                          await DatabaseHelper.clearMessages();
-                          setState(() {
-                            messages.clear();
-                            print('Messages cleared.');
-                          });
+                          _messages.clear();
+                          _messagesController.add(_messages);
+                          print('Messages cleared.');
                         }
                       },
                     ),
@@ -294,14 +332,13 @@ class _MessageScreenState extends State<MessageScreen> {
                         onKey: (event) {
                           if (event is RawKeyDownEvent) {
                             if (event.logicalKey == LogicalKeyboardKey.enter && !event.isShiftPressed) {
-                                if (_message.trim().isNotEmpty) {
-                                  _sendMessage(_message, null);
-                                  _textController.clear();
-                                  setState(() {
-                                    _message = '';
+                              if (_message.trim().isNotEmpty) {
+                                _sendMessage(_message, null);
+                                setState(() {
+                                  _message = '';
                                 });
+                                _textController.clear();
                               }
-
                             }
                           }
                         },

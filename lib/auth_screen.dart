@@ -13,7 +13,7 @@ class AuthScreen extends StatelessWidget {
 
   Future<void> _register(BuildContext context) async {
     final response = await http.post(
-      Uri.parse(registerUrl), // Используем URL из конфигурации
+      Uri.parse(Config.registerUrl), // Используем URL из конфигурации
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'username': usernameController.text,
@@ -34,7 +34,7 @@ class AuthScreen extends StatelessWidget {
 
   Future<void> _login(BuildContext context) async {
     final response = await http.post(
-      Uri.parse(loginUrl), // Используем URL из конфигурации
+      Uri.parse(Config.loginUrl), // Используем URL из конфигурации
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'username': usernameController.text,
@@ -52,8 +52,7 @@ class AuthScreen extends StatelessWidget {
       if (responseBody.isNotEmpty) {
         final responseData = jsonDecode(responseBody);
         final token = responseData['token'];
-        await authModel.setToken(token);
-        await authModel.saveTokenToDatabase(token);  // Сохранение токена в БД
+        await authModel.setToken(token); // Сохранение токена в AuthModel
         Navigator.of(context).pop();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
