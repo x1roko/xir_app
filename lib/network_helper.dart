@@ -54,20 +54,6 @@ class NetworkHelper {
       },
     );
     print('Connecting to WebSocket with token: ${authModel.token}');
-    channel.stream.listen(
-      (data) {
-        print('WebSocket data received: $data');
-      },
-      onError: (error) {
-        print('WebSocket error: $error');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка WebSocket: $error')),
-        );
-      },
-      onDone: () {
-        print('WebSocket connection closed');
-      },
-    );
 
     return channel;
   }

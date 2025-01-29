@@ -38,6 +38,7 @@ class _MessageScreenState extends State<MessageScreen> {
   final AudioPlayer _player = AudioPlayer();
   WebSocketChannel? _channel;
   String _currentMessage = '';
+  int _currentMessageIndex = -1;
 
   @override
   void initState() {
@@ -205,13 +206,17 @@ class _MessageScreenState extends State<MessageScreen> {
           print('WebSocket message received: $message');
           setState(() {
             _currentMessage += message;
-            if (message.endsWith('?')) {
+            if (_currentMessageIndex == -1) {
+              // Если это первая часть сообщения, создаем новое сообщение
               final newMessage = {'message': _currentMessage, 'isSentByUser': 0};
               _messages.add(newMessage);
-              _messagesController.add(_messages);
-              _scrollToBottom();
-              _currentMessage = '';
+              _currentMessageIndex = _messages.length - 1;
+            } else {
+              // Иначе обновляем существующее сообщение
+              _messages[_currentMessageIndex]['message'] = _currentMessage;
             }
+            _messagesController.add(_messages);
+            _scrollToBottom();
           });
         }, onError: (error) {
           print('WebSocket error: $error');
