@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:http/http.dart' as http;
+import 'package:xir_app/bloc/auth/auth_event.dart';
 import 'dart:convert';
-import 'auth_model.dart';
-import 'config.dart'; // Импортируем конфигурацию
+import '../bloc/auth/auth_bloc.dart';
+import '../config.dart';
 
 class AuthScreen extends StatelessWidget {
   final TextEditingController usernameController = TextEditingController();
@@ -13,7 +14,7 @@ class AuthScreen extends StatelessWidget {
 
   Future<void> _register(BuildContext context) async {
     final response = await http.post(
-      Uri.parse(Config.registerUrl), // Используем URL из конфигурации
+      Uri.parse(Config.registerUrl),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'username': usernameController.text,
@@ -34,7 +35,7 @@ class AuthScreen extends StatelessWidget {
 
   Future<void> _login(BuildContext context) async {
     final response = await http.post(
-      Uri.parse(Config.loginUrl), // Используем URL из конфигурации
+      Uri.parse(Config.loginUrl),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'username': usernameController.text,
@@ -46,13 +47,12 @@ class AuthScreen extends StatelessWidget {
     print('Response body: ${response.body}');
 
     if (response.statusCode == 200) {
-      final authModel = Provider.of<AuthModel>(context, listen: false);
       final responseBody = response.body;
 
       if (responseBody.isNotEmpty) {
         final responseData = jsonDecode(responseBody);
         final token = responseData['token'];
-        await authModel.setToken(token); // Сохранение токена в AuthModel
+        BlocProvider.of<AuthBloc>(context).add(SetToken(token));
         Navigator.of(context).pop();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'config.dart'; // Импорт конфигурации
-import 'database_helper.dart'; // Импорт DatabaseHelper
+import '../config.dart'; // Импорт конфигурации
+import '../helpers/database_helper.dart'; // Импорт DatabaseHelper
 
 class AuthModel extends ChangeNotifier {
   String _token = '';

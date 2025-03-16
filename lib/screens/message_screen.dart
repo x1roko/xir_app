@@ -2,15 +2,18 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:provider/provider.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:flutter/scheduler.dart';
-import 'auth_model.dart';
-import 'database_helper.dart';
-import 'message_widget.dart';
-import 'network_helper.dart';
+import 'package:xir_app/bloc/auth/auth_state.dart';
+import 'package:xir_app/bloc/message/message_event.dart';
+import 'package:xir_app/bloc/message/message_state.dart';
+import '../bloc/auth/auth_bloc.dart';
+import '../bloc/message/message_bloc.dart';
+import '../widgets/message_widget.dart';
+import '../helpers/network_helper.dart';
 import 'settings_screen.dart';
 import 'auth_screen.dart';
 import 'account_screen.dart';
@@ -25,8 +28,7 @@ class MessageScreen extends StatefulWidget {
 
 class _MessageScreenState extends State<MessageScreen> {
   final _messagesController = StreamController<List<Map<String, dynamic>>>.broadcast();
-  final List<Map<String, dynamic>> _messages = [];
-  static const platform = MethodChannel('com.example.xir_app/process_text');
+  List<Map<String, dynamic>> _messages = [];
   String _message = '';
   final TextEditingController _textController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
@@ -50,11 +52,12 @@ class _MessageScreenState extends State<MessageScreen> {
   }
 
   Future<void> _loadTokenAndConnect() async {
-    final authModel = Provider.of<AuthModel>(context, listen: false);
-    await authModel.loadToken();
-    print('Token loaded: ${authModel.token}');
+    final authBloc = BlocProvider.of<AuthBloc>(context);
+    final messageBloc = BlocProvider.of<MessageBloc>(context);
 
-    if (authModel.isAuthenticated) {
+    print('Auth state: ${authBloc.state}'); // Логирование состояния AuthBloc
+    if (authBloc.state != null && authBloc.state != "") {
+      messageBloc.add(LoadMessages());
       await _loadMessagesFromServer();
       await _connectWebSocket();
     } else {
@@ -76,7 +79,7 @@ class _MessageScreenState extends State<MessageScreen> {
 
   Future<void> _loadMessagesFromServer() async {
     try {
-      final loadedMessages = await NetworkHelper.loadMessages(context);
+      final loadedMessages = await NetworkHelper.loadMessages();
       for (var msg in loadedMessages) {
         _messages.add({
           'message': msg['text'],
@@ -137,7 +140,7 @@ class _MessageScreenState extends State<MessageScreen> {
 
       if (!cancel && path != null) {
         String recognizedText = await _recognizeSpeech(path);
-        _sendMessage(recognizedText, null);
+        BlocProvider.of<MessageBloc>(context).add(SendMessage(recognizedText));
         await File(path).delete(); // Удаляем временный файл
       }
     } catch (e) {
@@ -151,18 +154,6 @@ class _MessageScreenState extends State<MessageScreen> {
     // Например, использование библиотеки speech_to_text или другой
     // Верните распознанный текст
     return "распознанный текст"; // Замените на реальный распознанный текст
-  }
-
-  Future<void> _sendMessage(String message, String? filePath) async {
-    if (message.trim().isEmpty) return;
-
-    final newMessage = {'message': message, 'isSentByUser': 1};
-    _messages.add(newMessage);
-    _messagesController.add(_messages);
-
-    _scrollToBottom();
-
-    _channel?.sink.add(jsonEncode({'text': message}));
   }
 
   void _scrollToBottom() {
@@ -196,14 +187,14 @@ class _MessageScreenState extends State<MessageScreen> {
   }
 
   Future<void> _connectWebSocket() async {
+    _channel?.sink.close(); // Закрываем предыдущее подключение, если оно существует
     try {
-      _channel?.sink.close(); // Закрываем предыдущее подключение, если оно существует
-      _channel = await NetworkHelper.connectWebSocket(context);
+      _channel = await NetworkHelper.connectWebSocket();
 
       if (_channel != null) {
         print('WebSocket connected successfully');
         _channel!.stream.listen((message) {
-          print('WebSocket message received: $message');
+          print('WebSocket message received: $message'); // Логирование полученного сообщения
           setState(() {
             _currentMessage += message;
             if (_currentMessageIndex == -1) {
@@ -249,12 +240,12 @@ class _MessageScreenState extends State<MessageScreen> {
               Navigator.of(context).push(MaterialPageRoute(builder: (_) => SettingsScreen()));
             },
           ),
-          Consumer<AuthModel>(
-            builder: (context, authModel, child) {
+          BlocBuilder<AuthBloc, AuthState>(
+            builder: (context, authState) {
               return IconButton(
-                icon: Icon(authModel.isAuthenticated ? Icons.account_circle : Icons.login),
+                icon: Icon(authState is AuthAuthenticated ? Icons.account_circle : Icons.login),
                 onPressed: () {
-                  if (authModel.isAuthenticated) {
+                  if (authState is AuthAuthenticated) {
                     Navigator.of(context).push(MaterialPageRoute(builder: (_) => AccountScreen()));
                   } else {
                     Navigator.of(context).push(MaterialPageRoute(builder: (_) => AuthScreen()));
@@ -291,7 +282,7 @@ class _MessageScreenState extends State<MessageScreen> {
                         },
                       );
                     } else {
-                      return Center(child: CircularProgressIndicator());
+                      return Container();
                     }
                   },
                 ),
@@ -325,8 +316,7 @@ class _MessageScreenState extends State<MessageScreen> {
                           ),
                         );
                         if (confirmDelete == true) {
-                          _messages.clear();
-                          _messagesController.add(_messages);
+                          BlocProvider.of<MessageBloc>(context).add(DeleteMessages());
                           print('Messages cleared.');
                         }
                       },
@@ -335,15 +325,13 @@ class _MessageScreenState extends State<MessageScreen> {
                       child: RawKeyboardListener(
                         focusNode: FocusNode(),
                         onKey: (event) {
-                          if (event is RawKeyDownEvent) {
-                            if (event.logicalKey == LogicalKeyboardKey.enter && !event.isShiftPressed) {
-                              if (_message.trim().isNotEmpty) {
-                                _sendMessage(_message, null);
-                                setState(() {
-                                  _message = '';
-                                });
-                                _textController.clear();
-                              }
+                          if (event is RawKeyEvent && event.logicalKey == LogicalKeyboardKey.enter && !event.isShiftPressed) {
+                            if (_message.trim().isNotEmpty) {
+                              BlocProvider.of<MessageBloc>(context).add(SendMessage(_message));
+                              setState(() {
+                                _message = '';
+                              });
+                              _textController.clear();
                             }
                           }
                         },
@@ -393,7 +381,7 @@ class _MessageScreenState extends State<MessageScreen> {
                         : IconButton(
                             icon: Icon(Icons.send),
                             onPressed: () {
-                              _sendMessage(_message, null);
+                              BlocProvider.of<MessageBloc>(context).add(SendMessage(_message));
                               _textController.clear();
                               setState(() {
                                 _message = '';
